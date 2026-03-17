@@ -1,6 +1,6 @@
 #include <FlexCAN_T4.h>
 
-// --- Pin Definitions ---
+// Defining pins
 const int wheelSpeedSensor1_Pin = 14; // Digital input (Wheel Speed 1)
 const int wheelSpeedSensor2_Pin = 15; // Digital input (Wheel Speed 2)
 const int shockTravelSensor1_Pin = 16; // Analog input (Shock Travel 1)
@@ -15,6 +15,7 @@ int shockTravel2_Val = 0;
 
 // Initialize CAN1 (Pins 0 RX, 1 TX), not really sure if this is the right way to do CAN
 FlexCAN_T4<CAN1, RX_SIZE_256, TX_SIZE_16> can1;
+CAN_message_t msg; // create CAN message
 
 // Interrupt Service Routines (ISRs), run automatically in the background every time a pulse is detected, for the high/low readings
 void countPulse1() {
@@ -30,7 +31,7 @@ void setup() {
   pinMode(wheelSpeedSensor1_Pin, INPUT_PULLUP);
   pinMode(wheelSpeedSensor2_Pin, INPUT_PULLUP);
   
-  // Attach interrupts to trigger on the falling edge of the pulse
+  // Attach interrupts to trigger on the falling edge of the pulse, triggers the wheel speed low reading before the 100 ms if the car is going fast enough
   attachInterrupt(digitalPinToInterrupt(wheelSpeedSensor1_Pin), countPulse1, FALLING);
   attachInterrupt(digitalPinToInterrupt(wheelSpeedSensor2_Pin), countPulse2, FALLING);
 
@@ -40,31 +41,40 @@ void setup() {
 
   // Setup CAN Bus, not really sure if this is the correct way to do can
   can1.begin();
-  can1.setBaudRate(500000); // 500kbps is standard automotive speed
-  Serial.println("CAN1 Initialized at 500kbps");
-}
-
+  can1.setBaudRate(500000); // 500kbps
+  // static parts of CAN
+  msg.id = 0x100 // CAN ID for board, this might need to change
+  msg.len = 8 // 8 bytes
+  }
 void loop() {
   // Read Analog Shock Sensors (Returns a value from 0 to 1023 because of 12-bit onboard ADC in Teensy)
   shockTravel1_Val = analogRead(shockTravelSensor1_Pin);
   shockTravel2_Val = analogRead(shockTravelSensor2_Pin);
 
-  // Safely grab the interrupt counters
+  // Get nterrupt counters
   noInterrupts();
   unsigned long currentPulses1 = wheelSpeed1_Pulses;
   unsigned long currentPulses2 = wheelSpeed2_Pulses;
   interrupts();
 
-  // Print the data to the Serial Monitor to verify board operation
-  Serial.print("Shock 1 (Pin 16): ");
-  Serial.print(shockTravel1_Val);
-  Serial.print("\tShock 2 (Pin 17): ");
-  Serial.print(shockTravel2_Val);
-  
-  Serial.print("\tWS 1 Pulses (Pin 14): ");
-  Serial.print(currentPulses1);
-  Serial.print("\tWS 2 Pulses (Pin 15): ");
-  Serial.println(currentPulses2);
-
-  delay(100); // Wait 100 milliseconds before reading again, is this frequent enough?
+  // CAN message
+  // bytes 0 and 1 are shock travel 1
+  msg.buf[0] = (shockTravel1_Val >> 8) & 0xFF;
+  msg.buf[1] = shockTravel1_Val & 0xFF;
+  // bytes 2 and 3 are shock travel 2
+  msg.buf[2] = (shockTravel2_Val >> 8) & 0xFF;
+  msg.buf[3] = shockTravel2_Val & 0xFF;
+  // bytes 4 and 5 are ws 1
+  uint16_t ws1_16bit = (uint16_t)currentPules1;
+  msg.buf[4] = (ws1_16bit >> 8) & 0xFF;
+  msg.buf[5] = ws1_16bit & 0xFF;
+  // bytes 6 and 7 are ws 2
+  uint16_t ws2_16bit = (uint16_t)currentPules1;
+  msg.buf[6] = (ws2_16bit >> 8) & 0xFF;
+  msg.buf[7] = ws2_16bit & 0xFF;
+  // send to cAN
+  can1.write(msg)
+    
+  delay(100); // Wait 100 milliseconds before reading again, only used if interrupt os not reached
+}
 }
