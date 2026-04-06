@@ -1,10 +1,10 @@
 #include <FlexCAN_T4.h>
 
 // Defining pins
-const int wheelSpeedRear_Pin = 14;     // Digital input (Wheel Speed 1)
-const int wheelSpeedFront_Pin = 15;    // Digital input (Wheel Speed 2)
-const int rightShockFront_Pin = 16;    // Analog input (Shock Travel 1)
-const int leftShockFront_Pin = 17;     // Analog input (Shock Travel 2)
+const int wheelSpeedRear_Pin = 14;     // Belongs to 0x09
+const int wheelSpeedFront_Pin = 15;    // Belongs to 0x09 (Mapped to rightShockRear address)
+const int rightShockFront_Pin = 16;    // Belongs to 0x08
+const int leftShockFront_Pin = 17;     // Belongs to 0x08
 
 // Variables
 volatile unsigned long wheelSpeedRear_Pulses = 0;
@@ -21,7 +21,10 @@ int leftShockFront_Rotations = 0;
 
 // Initialize CAN1
 FlexCAN_T4<CAN1, RX_SIZE_256, TX_SIZE_16> can1;
-CAN_message_t msg; 
+
+// Global message declarations
+CAN_message_t msgFront; 
+CAN_message_t msgRear;  
 
 // Interrupt Service Routines
 void countPulseRear() {
@@ -50,9 +53,9 @@ void setup() {
   can1.begin();
   can1.setBaudRate(500000); 
   
-  msgFront.id = 0x08; // GPIO Front
+  // Setup Message Headers
+  msgFront.id = 0x08; // GPIO FRONT
   msgRear.id = 0x09;  // GPIO REAR
-  msg.len = 8; 
 
   // Grab the initial shock values
   rightShockFront_Prev = analogRead(rightShockFront_Pin);
@@ -83,37 +86,54 @@ void loop() {
   unsigned long currentPulsesRear = wheelSpeedRear_Pulses;
   unsigned long currentPulsesFront = wheelSpeedFront_Pulses;
   
-  // Reset for speed calculation (pulses per 100ms)
+  // Reset counters for speed calculation
   wheelSpeedRear_Pulses = 0; 
   wheelSpeedFront_Pulses = 0;
   interrupts();
 
-  // ==========================================
-  // PACKING THE CAN MESSAGE 
-  // ==========================================
+  // MESSAGE 1: GPIO FRONT (0x08)
+  msgFront.len = 5;
   
-  // Bytes 0 and 1: Right Shock Front
+  // Byte 0: diffStateFront (Sending 0 as a placeholder)
+  msgFront.buf[0] = 0x00; 
+
+  // Bytes 1 and 2: Right Shock Front
   uint16_t rsf_16bit = (uint16_t)rightShockFront_Total;
-  msg.buf[0] = (rsf_16bit >> 8) & 0xFF;
-  msg.buf[1] = rsf_16bit & 0xFF;
+  msgFront.buf[1] = (rsf_16bit >> 8) & 0xFF;
+  msgFront.buf[2] = rsf_16bit & 0xFF;
   
-  // Bytes 2 and 3: Left Shock Front
+  // Bytes 3 and 4: Left Shock Front
   uint16_t lsf_16bit = (uint16_t)leftShockFront_Total;
-  msg.buf[2] = (lsf_16bit >> 8) & 0xFF;
-  msg.buf[3] = lsf_16bit & 0xFF;
+  msgFront.buf[3] = (lsf_16bit >> 8) & 0xFF;
+  msgFront.buf[4] = lsf_16bit & 0xFF;
 
-  // Bytes 4 and 5: Wheel Speed Rear
-  uint16_t wsr_16bit = (uint16_t)currentPulsesRear;
-  msg.buf[4] = (wsr_16bit >> 8) & 0xFF;
-  msg.buf[5] = wsr_16bit & 0xFF;
-  
-  // Bytes 6 and 7: Wheel Speed Front (Occupying the unused shock address in the CAN code)
+  can1.write(msgFront);
+
+  // GPIO REAR (0x09)
+  msgRear.len = 7;
+
+  // Byte 0: diffStateRear (Sending 0 as a placeholder)
+  msgRear.buf[0] = 0x00;
+
+  // Bytes 1, 2, 3, 4: Wheel Speed Rear (Float conversion)
+  float speedFloat = (float)currentPulsesRear; 
+  union {
+    float f_val;
+    uint8_t b_val[4];
+  } floatToBytes;
+  floatToBytes.f_val = speedFloat;
+
+  msgRear.buf[1] = floatToBytes.b_val[0];
+  msgRear.buf[2] = floatToBytes.b_val[1];
+  msgRear.buf[3] = floatToBytes.b_val[2];
+  msgRear.buf[4] = floatToBytes.b_val[3];
+
+  // Bytes 5 and 6: Wheel Speed Front
   uint16_t wsf_16bit = (uint16_t)currentPulsesFront;
-  msg.buf[6] = (wsf_16bit >> 8) & 0xFF;
-  msg.buf[7] = wsf_16bit & 0xFF;
+  msgRear.buf[5] = (wsf_16bit >> 8) & 0xFF;
+  msgRear.buf[6] = wsf_16bit & 0xFF;
 
-  // Send the message
-  can1.write(msg);
+  can1.write(msgRear);
     
   delay(100);
 }
