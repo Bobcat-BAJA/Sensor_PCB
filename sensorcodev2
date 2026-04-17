@@ -1,0 +1,56 @@
+#include <LittleFS.h>
+
+LittleFS_Program myfs;
+const int rightShockFront_Pin = 16; 
+const int leftShockFront_Pin = 17;
+
+File dataFile;
+unsigned long lastLogTime = 0;
+int loopCounter = 0;
+
+// Adjust these for your needs
+const unsigned long LOG_INTERVAL = 10; // 10ms = 100Hz | 20ms = 50Hz
+const int FLUSH_COUNT = 50;           // Sync data every 500 readings, keep constant under the 512 limit
+
+void setup() {
+  Serial.begin(115200);
+  
+  pinMode(rightShockFront_Pin, INPUT);
+  pinMode(leftShockFront_Pin, INPUT); 
+  analogReadResolution(12);
+
+  // Note: 1MB is tight for 100Hz. Ensure your Flash Size in Tools is set to 
+  // give you enough room for the program + this 1MB partition.
+
+    myfs.begin(1024 * 1024); // Initialize 1MB of filesystem
+    myfs.remove("SHOCK_DATA.csv"); 
+    
+    dataFile = myfs.open("SHOCK_DATA.csv", FILE_WRITE);
+    if (dataFile) {
+      dataFile.seek(dataFile.size());
+      dataFile.println("Time(ms),RightShock,LeftShock");
+      dataFile.flush();
+    }
+  }
+
+void loop() {
+  unsigned long currentMillis = millis();
+
+  if (currentMillis - lastLogTime >= LOG_INTERVAL) { 
+    // THE FIX: Do not use += LOG_INTERVAL. Reset the timer to the actual current time.
+    lastLogTime = currentMillis; 
+
+    int shock1Val = analogRead(rightShockFront_Pin);
+    int shock2Val = analogRead(leftShockFront_Pin);
+    
+    if (dataFile) {
+      dataFile.printf("%lu,%d,%d\n", currentMillis, shock1Val, shock2Val);
+      loopCounter++;
+      
+      if (loopCounter >= FLUSH_COUNT) {
+        dataFile.flush();
+        loopCounter = 0;
+    }
+  }
+  }
+}
